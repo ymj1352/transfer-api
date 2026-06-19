@@ -1,11 +1,11 @@
 const DEFAULT_UPSTREAM_BASE_URL = "https://unlimited.surf";
-const DEFAULT_OPENAI_MODEL = "gateway-gpt-5.5";
+const DEFAULT_OPENAI_MODEL = "gateway-gpt-5";
 const DEFAULT_CLAUDE_MODEL = "claude-opus-4-7-20260101";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-  "Access-Control-Allow-Headers": "authorization,content-type,x-api-key,anthropic-version,anthropic-beta,openai-beta",
+  "Access-Control-Allow-Headers": "authorization,content-type,x-api-key,anthropic-api-key,anthropic-version,anthropic-beta,openai-beta",
   "Access-Control-Expose-Headers": "content-type,request-id,x-request-id",
 };
 
@@ -19,6 +19,9 @@ export default {
     const path = normalizePath(url.pathname);
 
     try {
+      const authError = validateWorkerApiKey(request, env);
+      if (authError) return authError;
+
       if (path === "/" || path === "/health") {
         return jsonResponse(serviceInfo(request, env));
       }
@@ -818,6 +821,10 @@ function upstreamApiKey(request, env) {
   const key = optionalUpstreamApiKey(request, env);
   if (key) return key;
 
+  if (env.WORKER_API_KEY) {
+    throw new Error("Missing upstream API key. Set UNLIMITED_SURF_API_KEY when WORKER_API_KEY is enabled.");
+  }
+
   throw new Error("Missing upstream API key. Set UNLIMITED_SURF_API_KEY or pass Authorization: Bearer <key> / x-api-key: <key>.");
 }
 
@@ -825,11 +832,45 @@ function optionalUpstreamApiKey(request, env) {
   const configured = env.UNLIMITED_SURF_API_KEY || env.API_KEY || env.AUTH_KEY;
   if (configured) return configured;
 
+  if (env.WORKER_API_KEY) return "";
+
+  return clientApiKey(request);
+}
+
+function validateWorkerApiKey(request, env) {
+  const expected = env.WORKER_API_KEY;
+  if (!expected) return null;
+
+  const actual = clientApiKey(request);
+  if (actual && constantTimeEqual(actual, expected)) return null;
+
+  return jsonResponse({
+    error: {
+      message: "Invalid or missing Worker API key.",
+      type: "authentication_error",
+      code: "invalid_api_key",
+    },
+  }, { status: 401, headers: { "WWW-Authenticate": "Bearer" } });
+}
+
+function clientApiKey(request) {
   const auth = request.headers.get("authorization") || "";
   if (/^bearer\s+/i.test(auth)) return auth.replace(/^bearer\s+/i, "").trim();
 
   const xKey = request.headers.get("x-api-key") || request.headers.get("anthropic-api-key");
   return xKey ? xKey.trim() : "";
+}
+
+function constantTimeEqual(actual, expected) {
+  const actualText = String(actual || "");
+  const expectedText = String(expected || "");
+  if (actualText.length !== expectedText.length) return false;
+
+  let diff = 0;
+  for (let i = 0; i < actualText.length; i += 1) {
+    diff |= actualText.charCodeAt(i) ^ expectedText.charCodeAt(i);
+  }
+  return diff === 0;
 }
 
 function upstreamBase(env) {
