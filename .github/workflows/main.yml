@@ -24,3 +24,4 @@ jobs:
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: "073caaa810ccfcb4e37b429fece09da9"
